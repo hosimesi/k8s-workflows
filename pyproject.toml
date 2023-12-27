@@ -1,0 +1,41 @@
+[tool.poetry]
+name = "k8s-workflows"
+version = "0.1.0"
+description = ""
+authors = ["hosimesi <hosimesi11@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.poetry.dev-dependencies]
+
+[tool.poetry.group.stt.dependencies]
+faster-whisper = "^0.10.0"
+
+
+[tool.poetry.group.summary.dependencies]
+openai = "^1.6.1"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+black = "^23.12.1"
+ruff = "^0.1.9"
+mypy = "^1.8.0"
+taskipy = "^1.12.2"
+
+
+[tool.taskipy.tasks]
+update_dev = { cmd = "poetry export --without-hashes --with dev --output requirements/dev.txt", help = "update dev requirements" }
+update_shared = { cmd = "poetry export --without-hashes --with shared --output requirements/shared.txt", help = "update shared requirements" }
+update_stt = { cmd = "poetry export --without-hashes --with stt --output requirements/stt.txt", help = "update stt requirements" }
+update_summary = { cmd = "poetry export --without-hashes --with summary --output requirements/summary.txt", help = "update summary requirements" }
+
+
+[tool.poetry.group.shared.dependencies]
+numpy = "^1.26.2"
+pandas = "^2.1.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
