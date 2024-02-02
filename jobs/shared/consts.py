@@ -1,0 +1,7 @@
+ARTIFACT_BASE_DIR = "artifacts"
+TEXT_FILE_NAME = "text_items.json"
+AUDIO_FILE_NAME = "audio_items.json"
+VAD_FILE_NAME = "vad_items.json"
+DIVIDED_AUDIO_FILE_NAME = "divided_audio_items.json"
+DIVIDED_STT_FILE_NAME = "divided_stt_item.json"
+AGGREGATE_TEXT_FILE_NAME = "aggregate_text_items.json"

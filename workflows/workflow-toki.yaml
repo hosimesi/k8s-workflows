@@ -1,0 +1,226 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: sample-batch-workflow-
+spec:
+  entrypoint: main-job
+  # onExit: exit-handler-job
+  # NOTICE: use in local kind. If you use in GKE, you don't need this.
+  volumes:
+  - name: google-cloud-key
+    secret:
+      secretName: gcp-key
+  imagePullSecrets:
+  - name: gcp-key
+  ttlStrategy:
+    secondsAfterCompletion: 60
+    secondsAfterSuccess: 10
+    secondsAfterFailure: 10
+  arguments:
+    parameters:
+    - name: files
+      value: '[{"id": "1", "path": "/path/to/file1.mp3", "type": "audio"}, {"id": "2", "path": "/path/to/file2.txt", "type": "text"}, {"id": "3", "path": "/path/to/file3.mp3", "type": "audio"}, {"id": "4", "path": "/path/to/file4.txt", "type": "text"}]'
+  templates:
+  - name: main-job
+    inputs:
+      parameters:
+      - name: files
+    steps:
+    - - name: entrypoint-job
+        template: entrypoint
+        arguments:
+          parameters:
+          - name: files
+            value: "{{inputs.parameters.files}}"
+    - - name: vad-main-job
+        template: vad-main
+        arguments:
+          parameters:
+          - name: audio-file
+            value: "{{item}}"
+        withParam: "{{steps.entrypoint-job.outputs.parameters.audio-files}}"
+      # - name: summary-main-job
+      #   template: summary-main
+      #   arguments:
+      #     artifacts:
+      #     - name: text-files
+      #       from: "{{steps.entrypoint-job.outputs.artifacts.text-files}}
+      - name: summary-main-parallel-job-for-file
+        template: summary-main
+        arguments:
+          parameters:
+          - name: text-file
+            value: "{{item}}"
+          withParam: "{{steps.entrypoint-job.outputs.parameters.text-files}}"
+    - - name: stt-main-job
+        template: stt-main
+        arguments:
+          artifacts:
+          - name: audio-files
+            from: "{{steps.vad-main-job.outputs.artifacts.vad-files}}"
+    # - - name: summary-main-job2
+    #     template: summary-main
+    #     arguments:
+    #       artifacts:
+    #       - name: text-files
+    #         from: "{{steps.stt-main-job.outputs.artifacts.text-files}}"
+    # - - name: exit-handler-job
+    #     template: exit-handler
+    #     arguments:
+    #       artifacts:
+    #       - name: audio-files
+    #         from: "{{steps.vad-main-job.outputs.artifacts.vad-files}}"
+
+
+# ====================================================================================================
+# ====================================== template ====================================================
+# ====================================================================================================
+  - name: entrypoint
+    inputs:
+      parameters:
+      - name: files
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/entrypoint:latest
+      command: [python3, main.py, -f, "{{inputs.parameters.files}}"]
+      imagePullPolicy: IfNotPresent
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    outputs:
+      parameters:
+        - name: audio-files
+          valueFrom:
+            path: "/app/artifacts/audio_items.json"
+        - name: text-files
+          valueFrom:
+            path: "/app/artifacts/text_items.json"
+
+    # 仮置き
+    # outputs:
+    #   artifacts:
+    #   # vad-main-jobの入力として使う
+    #   - name: audio-files
+    #     path: "/app/artifacts/audio_items.json"
+    #     gcs:
+    #       bucket: argo-workflows-samples
+    #       key: "{{workflow.name}}/sample/audio-files/audio_items.json" # NOTE: audio_items.json is output file name
+    #       # GKE上だったらいらない
+    #       serviceAccountKeySecret:
+    #         name: gcs-credentials
+    #         key: serviceAccountKey
+      # summary-main-jobの入力として使う
+      # - name: text-files
+      #   path: "/app/artifacts/text_items.json"
+      #   gcs:
+      #     bucket: argo-workflows-samples
+      #     key: "{{workflow.name}}/sample/audio-files/text_items.json"
+      #     serviceAccountKeySecret:
+      #       name: gcs-credentials
+      #       key: serviceAccountKey
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of workflow. This task separate audio files and text files."
+
+  - name: vad-main
+    inputs:
+      parameters:
+      - name: audio-file
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/vad:latest
+      command: [python3, main.py]
+      args: ["-f", "{{inputs.parameters.audio-file}}"]
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    outputs:
+      artifacts:
+      - name: vad-files
+        path: "/app/artifacts/vad_items.json"
+        gcs:
+          bucket: argo-workflows-samples
+          key: "{{workflow.name}}/sample/vad-files/vad_items.json" # NOTE: audio_items.json is output file name
+          # GKE上だったらいらない
+          serviceAccountKeySecret:
+            name: gcs-credentials
+            key: serviceAccountKey
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of vad tasks. This task processes audio files."
+
+  - name: stt-main
+    inputs:
+      artifacts:
+      - name: audio-files
+        path: /app/artifacts/vad_items.json
+        gcs:
+          bucket: argo-workflows-samples
+          key: "{{workflow.name}}/sample/vad-files/vad_items.json"
+          serviceAccountKeySecret:
+            name: gcs-credentials
+            key: serviceAccountKey
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/stt:latest
+      command: [python3, main.py]
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    outputs:
+      artifacts:
+      - name: text-files
+        path: "/app/artifacts/text_items.json"
+        gcs:
+          bucket: argo-workflows-samples
+          key: "{{workflow.name}}/sample/text-files/text_items.json" # NOTE: audio_items.json is output file name
+          # GKE上だったらいらない
+          serviceAccountKeySecret:
+            name: gcs-credentials
+            key: serviceAccountKey
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of stt workflow. This task processes audio files."
+
+  - name: summary-main
+    inputs:
+      parameters:
+      - name: text-file
+    # inputs:
+    #   artifacts:
+    #   - name: text-files
+    #     path: "/app/artifacts/text_items.json"
+    #     gcs:
+    #       bucket: argo-workflows-samples
+    #       key: "{{workflow.name}}/sample/text-files/text_items.json"
+    #       serviceAccountKeySecret:
+    #         name: gcs-credentials
+    #         key: serviceAccountKey
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/summary:latest
+      command: [python3, main.py]
+      args: ["-f", "{{inputs.parameters.audio-file}}"]
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of summary workflow. This task processes summary files."
+

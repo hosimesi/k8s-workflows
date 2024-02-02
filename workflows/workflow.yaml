@@ -1,0 +1,222 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: sample-batch-workflow-
+spec:
+  entrypoint: main-job
+  # onExit: exit-handler-job
+  # NOTICE: use in local kind. If you use in GKE, you don't need this.
+  volumes:
+  - name: google-cloud-key
+    secret:
+      secretName: gcp-key
+  imagePullSecrets:
+  - name: gcp-key
+  ttlStrategy:
+    secondsAfterCompletion: 60
+    secondsAfterSuccess: 10
+    secondsAfterFailure: 10
+  arguments:
+    parameters:
+    - name: files
+      value: '[{"id": "1", "path": "/path/to/file1.mp3", "type": "audio"}, {"id": "2", "path": "/path/to/file2.txt", "type": "text"}, {"id": "3", "path": "/path/to/file3.mp3", "type": "audio"}, {"id": "4", "path": "/path/to/file4.txt", "type": "text"}]'
+  templates:
+  - name: main-job
+    inputs:
+      parameters:
+      - name: files
+    steps:
+    - - name: entrypoint-job
+        template: entrypoint
+        arguments:
+          parameters:
+          - name: files
+            value: "{{inputs.parameters.files}}"
+
+    - - name: vad-main-job
+        template: vad-main
+        arguments:
+          parameters:
+          - name: audio-file
+            value: "{{item}}"
+        withParam: "{{steps.entrypoint-job.outputs.parameters.audio-files}}"
+      - name: summary-main-parallel-job-for-file
+        template: summary-main
+        arguments:
+          parameters:
+          - name: text-file
+            value: "{{item}}"
+        withParam: "{{steps.entrypoint-job.outputs.parameters.text-files}}"
+
+    # divided-audio-fileがwithParamの返り値なので、jsonが2重形式式になっており、このままだとparseできない。
+    # - - name: unescape-json-job
+    #     template: run-python-script
+    #     arguments:
+    #       parameters:
+    #       - name: script
+    #         value: |
+    #           import json
+    #           import sys
+
+    #           def unescape_json(escaped_json):
+    #               unescaped_json = json.loads(escaped_json.encode().decode('unicode_escape'))
+    #               return json.dumps(unescaped_json)
+
+    #           if __name__ == "__main__":
+    #               escaped_json = sys.argv[1]
+    #               print(unescape_json(escaped_json))
+    #       - name: args
+    #         value: "{{steps.vad-main-job.outputs.parameters.divided-audio-files}}"
+
+    - - name: stt-main-job
+        template: stt-main
+        arguments:
+          parameters:
+          - name: divided-audio-file
+            value: "{{item}}"
+        withParam: "{{steps.vad-main-job.outputs.parameters.divided-audio-files}}"
+
+      - name: aggregate-main-job
+        template: aggregate-main
+        arguments:
+          parameters:
+          - name: divided-stt-file
+            value: "{{steps.stt-main-job.outputs.parameters.divided-stt-file}}"
+
+
+    # - - name: summary-main-job2
+    #     template: summary-main
+    #     arguments:
+    #       artifacts:
+    #       - name: text-files
+    #         from: "{{steps.stt-main-job.outputs.artifacts.text-files}}"
+    # - - name: exit-handler-job
+    #     template: exit-handler
+    #     arguments:
+    #       artifacts:
+    #       - name: audio-files
+    #         from: "{{steps.vad-main-job.outputs.artifacts.vad-files}}"
+
+
+# ====================================================================================================
+# ====================================== template ====================================================
+# ====================================================================================================
+  - name: entrypoint
+    inputs:
+      parameters:
+      - name: files
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/entrypoint:latest
+      command: [python3, main.py]
+      args: ["-f", "{{inputs.parameters.files}}"]
+      imagePullPolicy: IfNotPresent
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    outputs:
+      parameters:
+        - name: audio-files
+          valueFrom:
+            path: "/app/artifacts/audio_items.json"
+        - name: text-files
+          valueFrom:
+            path: "/app/artifacts/text_items.json"
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of workflow. This task separate audio files and text files."
+
+  - name: vad-main
+    inputs:
+      parameters:
+      - name: audio-file
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/vad:latest
+      command: [python3, main.py]
+      args: ["-f", "{{inputs.parameters.audio-file}}"]
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    outputs:
+      parameters:
+        - name: divided-audio-files
+          valueFrom:
+            path: "/app/artifacts/divided_audio_items.json"
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of vad tasks. This task processes divided audio files."
+
+  - name: summary-main
+    inputs:
+      parameters:
+      - name: text-file
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/summary:latest
+      command: [python3, main.py]
+      args: ["-f", "{{inputs.parameters.text-file}}"]
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of summary workflow. This task processes summary files."
+
+  - name: stt-main
+    inputs:
+      parameters:
+      - name: divided-audio-file
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/stt:latest
+      command: [python3, main.py]
+      args: ["-f", "{{inputs.parameters.divided-audio-file}}"]
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    outputs:
+      parameters:
+        - name: divided-stt-file
+          valueFrom:
+            path: "/app/artifacts/divided_stt_item.json"
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of stt workflow. This task processes audio files."
+
+
+  - name: aggregate-main
+    inputs:
+      parameters:
+      - name: divided-stt-file
+        value: 'no-value'
+    container:
+      image: asia-northeast1-docker.pkg.dev/aitech-aim-ai/argo-workflows-samples/aggregate:latest
+      command: [python3, main.py]
+      # env:
+      # - name: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /var/secrets/google/key.json
+      # volumeMounts:
+      # - name: google-cloud-key
+      #   mountPath: /var/secrets/google
+    retryStrategy:
+      limit: 3
+    metadata:
+      annotations:
+        description: "This task is entrypoint of aggregate workflow. This task processes aggregate files."

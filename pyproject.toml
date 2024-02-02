@@ -28,6 +28,7 @@ taskipy = "^1.12.2"
 [tool.taskipy.tasks]
 update_dev = { cmd = "poetry export --without-hashes --with dev --output requirements/dev.txt", help = "update dev requirements" }
 update_shared = { cmd = "poetry export --without-hashes --with shared --output requirements/shared.txt", help = "update shared requirements" }
+update_vad = { cmd = "poetry export --without-hashes --with vad --output requirements/vad.txt", help = "update vad requirements" }
 update_stt = { cmd = "poetry export --without-hashes --with stt --output requirements/stt.txt", help = "update stt requirements" }
 update_summary = { cmd = "poetry export --without-hashes --with summary --output requirements/summary.txt", help = "update summary requirements" }
 
@@ -35,6 +36,7 @@ update_summary = { cmd = "poetry export --without-hashes --with summary --output
 [tool.poetry.group.shared.dependencies]
 numpy = "^1.26.2"
 pandas = "^2.1.4"
+pydantic = "^2.5.3"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
